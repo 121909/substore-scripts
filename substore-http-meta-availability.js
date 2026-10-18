@@ -75,7 +75,14 @@ async function operator(proxies = [], targetPlatform, env) {
   // 转成 mihomo 内部格式, 供 HTTP-META 核心启动
   proxies.map((proxy, index) => {
     try {
-      const node = ProxyUtils.produce([{ ...proxy }], 'ClashMeta', 'internal', {
+      // 剥离交叉引用字段: HTTP-META 会把节点重命名为 proxy-N, 但不会重映射
+      // dialer-proxy / underlying-proxy 指向的 outbound, 引用悬空会导致 mihomo
+      // 解析配置 fatal 退出(端口永不绑定, 表现为 ECONNREFUSED).
+      // 连通性测试无需这些拨号跳板, 直接测节点自身连通性.
+      const cleanedProxy = { ...proxy }
+      delete cleanedProxy['dialer-proxy']
+      delete cleanedProxy['underlying-proxy']
+      const node = ProxyUtils.produce([cleanedProxy], 'ClashMeta', 'internal', {
         'include-unsupported-proxy': includeUnsupportedProxy,
       })?.[0]
       if (node) {
