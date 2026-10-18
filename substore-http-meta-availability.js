@@ -18,6 +18,8 @@
  *   - http_meta_port          端口, 默认 9876
  *   - http_meta_authorization Authorization, 默认无
  *   - http_meta_start_delay   初始启动延时(毫秒), 默认 3000
+ *   - http_meta_ready_timeout 核心就绪等待超时(毫秒), 默认 30000
+ *       启动后探测核心端口是否真正可连, 避免 /start 返回时核心尚未绑定导致 ECONNREFUSED
  *   - http_meta_proxy_timeout 每个节点耗时(毫秒), 默认 10000
  *       总超时 = start_delay + 节点数 * proxy_timeout, 用于防止脚本异常退出时核心过早退出
  *
@@ -123,6 +125,10 @@ async function operator(proxies = [], targetPlatform, env) {
   $.info(`\n======== HTTP-META 启动 ====\n[端口] ${ports}\n[PID] ${pid}\n`)
   $.info(`等待 ${http_meta_start_delay / 1000} 秒后开始检测`)
   await $.wait(http_meta_start_delay)
+
+  // 等待 mihomo 核心真正绑定监听端口, 防止 /start 返回后核心尚未就绪导致 ECONNREFUSED
+  const http_meta_ready_timeout = parseFloat($arguments.http_meta_ready_timeout ?? 30000)
+  await waitForCoreReady(http_meta_host, http_meta_ports[0], http_meta_ready_timeout)
 
   const concurrency = parseInt($arguments.concurrency || 10)
   await executeAsyncTasks(internalProxies.map(proxy => () => check(proxy)), { concurrency })
@@ -251,6 +257,49 @@ async function operator(proxies = [], targetPlatform, env) {
         if (running === 0) resolve()
       }
       next()
+    })
+  }
+
+  // 探测核心端口是否可连, 直到就绪或超时
+  async function waitForCoreReady(host, port, timeoutMs) {
+    const net = typeof require === 'function' ? require('net') : null
+    if (!net) {
+      // 无 net 模块时退化为固定延时
+      await $.wait(timeoutMs)
+      return
+    }
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (await canConnect(net, host, port, 2000)) {
+        $.info(`核心就绪: ${host}:${port}`)
+        return
+      }
+      await $.wait(500)
+    }
+    $.error(`核心就绪等待超时 ${timeoutMs}ms, 端口 ${host}:${port} 仍不可连接`)
+  }
+
+  function canConnect(net, host, port, timeoutMs) {
+    return new Promise(resolve => {
+      let socket
+      let settled = false
+      const finish = ok => {
+        if (settled) return
+        settled = true
+        try {
+          socket && socket.destroy()
+        } catch (e) {}
+        resolve(ok)
+      }
+      try {
+        socket = net.connect({ host, port })
+        socket.setTimeout(timeoutMs)
+        socket.once('connect', () => finish(true))
+        socket.once('timeout', () => finish(false))
+        socket.once('error', () => finish(false))
+      } catch (e) {
+        finish(false)
+      }
     })
   }
 }
