@@ -28,9 +28,9 @@
  *   - retries        重试次数, 默认 1
  *   - retry_delay    重试延时(毫秒), 默认 1000
  *   - concurrency    并发数, 默认 10
- *   - url            检测地址, 默认 http://connectivitycheck.platform.hicloud.com/generate_204
+ *   - url            检测地址, 默认 https://www.apple.com/library/test/success.html
  *                    URL query 传参需 encodeURIComponent, 前端可视化参数编辑则不需要
- *   - status         合法状态码正则, 默认 204 (URL 传参需 encodeURIComponent)
+ *   - status         合法状态码正则, 默认 200 (URL 传参需 encodeURIComponent)
  *   - method         head / get, 默认 head (检测地址不支持 head 时改 get)
  *   - show_latency   节点名前显示延迟, 默认不显示 (不开启也会写入 _latency 字段)
  *   - keep_incompatible  保留当前客户端不兼容的协议, 默认不保留
@@ -61,8 +61,8 @@ async function operator(proxies = [], targetPlatform, env) {
   const method = $arguments.method || 'head'
   const keepIncompatible = $arguments.keep_incompatible
   const includeUnsupportedProxy = $arguments.include_unsupported_proxy
-  const validStatus = new RegExp($arguments.status || '204')
-  const url = decodeURIComponent($arguments.url || 'http://connectivitycheck.platform.hicloud.com/generate_204')
+  const validStatus = new RegExp($arguments.status || '200')
+  const url = decodeURIComponent($arguments.url || 'https://www.apple.com/library/test/success.html')
   const ua = decodeURIComponent(
     $arguments.ua ||
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Mobile/15E148 Safari/604.1'
