@@ -2,7 +2,7 @@
  * Sub-Store 节点连通性筛选脚本 (Node.js 后端 / HTTP-META 版)
  *
  * 作用: 逐个真实发起连接测试, 只保留可以连通的节点, 其余丢弃。
- * 缓存: 每个节点的测试结果缓存 24 小时, 24 小时内再次执行直接复用, 不重复测试。
+ * 缓存: 默认不缓存, 每次执行都重新测试所有节点 (传 cache=true 可开启缓存)。
  *
  * 环境: 已内置/部署 HTTP-META 的 Sub-Store 后端
  *   - Docker: 使用 xream/sub-store 的 http-meta tag 镜像 (本地且端口 9876 时无需额外设置)
@@ -35,7 +35,7 @@
  *   - show_latency   节点名前显示延迟, 默认不显示 (不开启也会写入 _latency 字段)
  *   - keep_incompatible  保留当前客户端不兼容的协议, 默认不保留
  *   - include_unsupported_proxy  包含官方/商店版不支持的协议, 默认不包含
- *   - cache          是否启用缓存, 默认 true (传 cache=false 关闭)
+ *   - cache          是否启用缓存, 默认 false (传 cache=true 开启)
  *   - cache_ttl      缓存时长(毫秒), 默认 86400000 (24 小时)
  *   - disable_failed_cache  不缓存失败结果, 失败节点每次重新测试, 默认关闭
  */
@@ -43,8 +43,8 @@
 async function operator(proxies = [], targetPlatform, env) {
   const $ = $substore
   const cache = scriptResourceCache
-  // 缓存默认开启; 传 cache=false 关闭
-  const cacheEnabled = !($arguments.cache === 'false' || $arguments.cache === false)
+  // 缓存默认关闭; 传 cache=true 开启
+  const cacheEnabled = $arguments.cache === 'true' || $arguments.cache === true
   // 缓存时长(毫秒), 默认 24 小时
   const cacheTTL = parseFloat($arguments.cache_ttl || 24 * 3600 * 1000)
   const disableFailedCache = $arguments.disable_failed_cache || $arguments.ignore_failed_error
