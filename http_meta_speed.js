@@ -49,7 +49,7 @@ async function operator(proxies = [], targetPlatform, context) {
   const keepIncompatible = $arguments.keep_incompatible
   const includeUnsupportedProxy = $arguments.include_unsupported_proxy
   const bytes = ($arguments.size || 10) * 1024 * 1024
-  const url = `https://link.testfile.org/PDF10MB`
+  const url = `http://lax.speedtest.is.cc/10M.img`
 
   const $ = $substore
   const validProxies = []
