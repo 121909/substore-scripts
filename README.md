@@ -8,7 +8,7 @@ Sub-Store (Node.js 后端 / 自带 HTTP-META) 脚本集合。
 
 ### 为什么必须用 HTTP-META 测出口
 
-`Host: 153.3.236.22:443` 是百度 T5 协议必需的鉴权头，**不是出口 IP**（实测把它改成别的 Host，上游会返回 `ERR_ACCESS_DENIED`）。真实出口 IP 只能通过节点发请求后由服务商看到的 IP 反查得到，而且不同入口 IP 会得到不同落地 IP：
+`Host: 153.3.236.22:443` 是百度 T5 协议必需的鉴权头，**不是出口 IP**。它与 `X-T5-Auth` 是配对鉴权：只改 Host、只改 auth、或把 Host 填成入口 IP，上游都会返回 `ERR_ACCESS_DENIED`。真实出口 IP 只能通过节点发请求后由服务商看到的 IP 反查得到，而且不同入口 IP 会得到不同落地 IP：
 
 | 入口 IP | 实测落地 IP | 落地归属 |
 | --- | --- | --- |
@@ -19,12 +19,24 @@ Sub-Store (Node.js 后端 / 自带 HTTP-META) 脚本集合。
 
 脚本启动 HTTP-META 的 mihomo 核心，逐节点经本地 proxy 端口请求 `ip-api.com/json?fields=...&query`，`query` 即该节点的落地 IP，再查它的省份+运营商。mihomo 的 http 出站会原样转发 `Host` / `X-T5-Auth` / `Meng` 自定义头（已用真实 mihomo 二进制端到端验证），所以测量请求能拿到真实落地。
 
+实测「Host 写成和入口 IP 一样」是否可用（14 个入口 IP × 3 次重试，curl 直连 + 真实 mihomo 复核）：
+
+| Host 写法 | 结果 |
+| --- | --- |
+| 模板值 `153.3.236.22:443` + `X-T5-Auth: 683556433` | 14/14 成功，HTTP 200 + 落地 IP |
+| `入口IP:443` + `X-T5-Auth: 683556433` | 0/14 成功，HTTP 403 `ERR_ACCESS_DENIED`（mihomo 下为 502） |
+| `入口IP` + `X-T5-Auth: 683556433` | 0/14 成功，HTTP 403 `ERR_ACCESS_DENIED` |
+| 换成任意其它 IP（`8.8.8.8:443`）或只换 auth | HTTP 403 `ERR_ACCESS_DENIED` |
+| 另一套已知配对 `ascdn.baidu.com` + `X-T5-Auth: 1951164069` | HTTP 200 + 落地 IP |
+
+结论：**Host 不能写成入口 IP**，必须是与 `X-T5-Auth` 配对的鉴权值。脚本默认已用可用的配对，无需改动。
+
 ### 生成规则
 
 - `server`：DoH 解析得到的入口 IP（实测 14 个）
 - `port` / `type` / `udp`：`443` / `http` / `false`
 - `headers`：按给定模板固定
-  - `Host`：`153.3.236.22:443`（T5 鉴权头，非出口 IP，可改）
+  - `Host`：`153.3.236.22:443`（T5 鉴权头，非出口 IP；见上方配对说明，勿改成入口 IP）
   - `User-Agent`：模板里的 `baiduboxapp` UA
   - `X-T5-Auth`：`683556433`
   - `Meng`：`dm.toutiao.com`
