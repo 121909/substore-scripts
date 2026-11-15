@@ -1,44 +1,47 @@
 /**
- * 百度 cloudnproxy 节点生成脚本 (Sub-Store Node.js 版)
+ * 百度 cloudnproxy 节点生成脚本 (Sub-Store Node.js 版 / HTTP-META 实测落地)
  *
  * 作用:
- *   解析 cloudnproxy.baidu.com 的全部 A 记录 (DoH), 每个入口 IP 生成一个 http 节点;
- *   按「入口省份+运营商|出口省份+运营商」命名 (如 广东移动|江苏联通)。
- *   节点模板、请求头完全按百度 T5 直连模板填写:
- *     server                入口 IP (DNS A 记录)
- *     port                  443
- *     type                  http
- *     udp                   false
- *     headers.Host          出口 IP:443 (默认 153.3.236.22:443)
- *     headers.X-T5-Auth     鉴权值 (默认 683556433)
- *     headers.User-Agent    baiduboxapp UA
- *     headers.Meng          dm.toutiao.com
+ *   1. DoH 解析 cloudnproxy.baidu.com 的全部 A 记录, 每个入口 IP 生成一个 http 节点,
+ *      节点头按百度 T5 直连模板填写 (Host / X-T5-Auth / User-Agent / Meng)。
+ *   2. 通过自带 HTTP-META 启动 mihomo 核心, 逐节点真实发起请求测「落地 IP」,
+ *      再查落地 IP 的省份+运营商。
+ *   3. 按「入口省份+运营商|出口省份+运营商」命名 (如 广东移动|江苏电信)。
+ *      测不到落地 IP 的节点直接丢弃 (测活)。
+ *   4. DNS / 入口归属 / 落地 IP / 落地归属 全部缓存 12 小时。
+ *
+ * 关于「出口」:
+ *   出口不是 Host 头里的 IP。Host: 153.3.236.22:443 是 T5 协议必需的鉴权头
+ *   (实测改成别的 Host 会被上游 ERR_ACCESS_DENIED 拒绝), 它自身的归属地是固定的。
+ *   真实出口 IP 必须用 HTTP-META 把节点跑起来、发一个查 IP 的请求才能拿到,
+ *   不同入口 IP 实测会得到不同落地 IP。本脚本正是这么做的。
  *
  * 用法:
- *   1. 脚本订阅: Sub-Store -> 订阅 -> + -> 类型「脚本」/ 本地脚本内容粘贴本文件
+ *   1. 脚本订阅: Sub-Store -> 订阅 -> 新建 -> 类型「脚本」/ 粘贴本文件内容
  *      (脚本订阅下 operator 收到的 proxies 为空, 返回即生成的节点)
- *   2. 节点操作: 在任意订阅 -> 节点操作 -> 脚本操作 粘贴本文件 URL,
- *      会把生成的节点追加到原订阅节点之后 (传 append=false 可改为替换)
+ *   2. 节点操作: 任意订阅 -> 节点操作 -> 脚本操作 粘贴本文件 URL,
+ *      会把生成的节点追加到原订阅节点之后 (传 append=false 改为替换)
  *   脚本链接参数以 # 开头, 多个用 & 连接:
  *     #host=153.3.236.22:443&auth=683556433&cache_ttl=43200000
  *
- * 关于「我使用的 substore 自带 httpmeta」:
- *   本脚本只做「节点生成 + 归属信息查询」, 不测活、不启动 HTTP-META 核心,
- *   因此不需要任何 httpmeta 参数即可运行。按仓库惯例仍保留下面全套参数,
- *   方便在同一条流水线里与其它 httpmeta 脚本 (如可用性筛选) 共用同一套配置:
- *     - http_meta_protocol      协议, 默认 http
- *     - http_meta_host          服务地址, 默认 127.0.0.1
- *     - http_meta_port          端口, 默认 9876
- *     - http_meta_authorization Authorization, 默认无
- *     - http_meta_start_delay   初始启动延时(毫秒), 默认 3000
- *     - http_meta_ready_timeout 核心就绪等待超时(毫秒), 默认 30000
- *     - http_meta_proxy_timeout 每个节点耗时(毫秒), 默认 10000
+ * 环境: 已内置/部署 HTTP-META 的 Sub-Store 后端 (Docker xream/sub-store 的 http-meta
+ *   镜像、Android 模块版等)。本脚本必须启动 HTTP-META 核心, 无核心会报错。
  *
- * 参数 (均为可选):
+ * HTTP-META 参数:
+ *   - http_meta_protocol      协议, 默认 http
+ *   - http_meta_host          服务地址, 默认 127.0.0.1
+ *   - http_meta_port          端口, 默认 9876
+ *   - http_meta_authorization Authorization, 默认无
+ *   - http_meta_start_delay   初始启动延时(毫秒), 默认 3000
+ *   - http_meta_ready_timeout 核心就绪等待超时(毫秒), 默认 30000
+ *   - http_meta_proxy_timeout 每个节点耗时(毫秒), 默认 10000
+ *       总超时 = start_delay + 节点数 * proxy_timeout, 防止脚本异常退出时核心过早退出
+ *
+ * 节点/模板参数:
  *   - domain          解析的域名, 默认 cloudnproxy.baidu.com
  *   - dns_server      DoH JSON 接口, 默认 https://223.5.5.5/resolve
- *                     (也支持 dns.alidns.com / dns.google 等返回 {Answer:[...]} 的接口)
- *   - host            出口地址 IP:端口, 默认 153.3.236.22:443
+ *                     (支持 short=1 数组或 {Answer:[...]} 结构)
+ *   - host            Host 头 (T5 鉴权, 非出口 IP), 默认 153.3.236.22:443
  *   - auth            X-T5-Auth, 默认 683556433
  *   - ua              User-Agent, 默认模板里的 baiduboxapp UA
  *   - meng            Meng 头, 默认 dm.toutiao.com
@@ -46,16 +49,22 @@
  *   - prefix          节点名前缀, 默认空
  *   - separator       入口/出口名分隔符, 默认 |
  *   - append          节点操作模式下是否追加到原节点, 默认 true
+ *
+ * 缓存/测活参数:
  *   - cache           是否启用缓存, 默认 true
  *   - cache_ttl       缓存时长(毫秒), 默认 43200000 (12 小时)
  *                     ⚠ 同时把 Sub-Store 里该订阅的「缓存」设为 12 小时(43200 秒),
  *                       否则前端缓存可能与脚本缓存不一致
+ *   - keep_failed     保留落地测活失败的节点(名字用「未知」占位), 默认 false 丢弃
  *   - geo_provider    归属地接口, 默认 speedtest (api-v3.speedtest.cn, 中文省份/运营商)
- *                     可选 ipapi (ip-api.com 兜底, 英文 isp 自动映射)
- *   - concurrency     归属地查询并发数, 默认 5
+ *                     可选 ipapi (ip-api.com, 英文 isp 自动映射)
+ *   - lookup_url      测落地 IP 的接口, 默认 ip-api.com/json?fields=status,message,query
+ *                     (需返回 query 字段 = 调用方看到的出口 IP)
+ *   - concurrency     落地/归属查询并发数, 默认 10
  *   - timeout         单次 HTTP 超时(毫秒), 默认 5000
  *   - retries         单次 HTTP 重试次数, 默认 1
  *   - retry_delay     重试延时(毫秒), 默认 1000
+ *   - include_unsupported_proxy  传给核心时包含官方/商店版不支持的协议, 默认不包含
  *   - debug           调试日志
  */
 
@@ -68,16 +77,11 @@ async function operator(proxies = [], targetPlatform, env) {
     args[key] === undefined || args[key] === '' ? fallback : args[key]
 
   const DOMAIN = decodeURIComponent(arg('domain', 'cloudnproxy.baidu.com'))
-  const DNS_SERVER = decodeURIComponent(
-    arg('dns_server', 'https://223.5.5.5/resolve')
-  )
+  const DNS_SERVER = decodeURIComponent(arg('dns_server', 'https://223.5.5.5/resolve'))
   const HOST = decodeURIComponent(arg('host', '153.3.236.22:443'))
   const AUTH = decodeURIComponent(arg('auth', '683556433'))
   const UA = decodeURIComponent(
-    arg(
-      'ua',
-      'okhttp/3.11.0 Dalvik/2.1.0 (Linux; Build/RKQ1.200826.002) baiduboxapp/11.0.5.12 (Baidu; P1 11)'
-    )
+    arg('ua', 'okhttp/3.11.0 Dalvik/2.1.0 (Linux; Build/RKQ1.200826.002) baiduboxapp/11.0.5.12 (Baidu; P1 11)')
   )
   const MENG = decodeURIComponent(arg('meng', 'dm.toutiao.com'))
   const PORT = parseInt(arg('port', 443), 10)
@@ -86,33 +90,32 @@ async function operator(proxies = [], targetPlatform, env) {
   const APPEND = String(arg('append', true)) !== 'false'
   const CACHE = String(arg('cache', true)) !== 'false'
   const CACHE_TTL = parseFloat(arg('cache_ttl', 12 * 3600 * 1000))
+  const KEEP_FAILED = String(arg('keep_failed', false)) === 'true' || arg('keep_failed') === true
   const GEO_PROVIDER = arg('geo_provider', 'speedtest')
-  const CONCURRENCY = parseInt(arg('concurrency', 5), 10)
+  const LOOKUP_URL = decodeURIComponent(
+    arg('lookup_url', 'http://ip-api.com/json?lang=zh-CN&fields=status,message,query')
+  )
+  const CONCURRENCY = parseInt(arg('concurrency', 10), 10)
   const TIMEOUT = parseFloat(arg('timeout', 5000))
   const RETRIES = parseFloat(arg('retries', 1))
   const RETRY_DELAY = parseFloat(arg('retry_delay', 1000))
+  const INCLUDE_UNSUPPORTED = arg('include_unsupported_proxy', false)
   const DEBUG = String(arg('debug', false)) === 'true' || arg('debug') === true
 
-  // httpmeta 参数: 本脚本不启动核心, 仅为与同仓库其它 httpmeta 脚本共用配置而声明
   const http_meta_protocol = arg('http_meta_protocol', 'http')
   const http_meta_host = arg('http_meta_host', '127.0.0.1')
   const http_meta_port = arg('http_meta_port', 9876)
   const http_meta_authorization = arg('http_meta_authorization', '')
+  const http_meta_api = `${http_meta_protocol}://${http_meta_host}:${http_meta_port}`
   const http_meta_start_delay = parseFloat(arg('http_meta_start_delay', 3000))
   const http_meta_ready_timeout = parseFloat(arg('http_meta_ready_timeout', 30000))
   const http_meta_proxy_timeout = parseFloat(arg('http_meta_proxy_timeout', 10000))
 
   const log = (...a) => $.info('[cloudnproxy] ' + a.join(' '))
   const dlog = (...a) => DEBUG && $.info('[cloudnproxy][debug] ' + a.join(' '))
-  dlog('httpmeta:', http_meta_protocol, http_meta_host, http_meta_port,
-    'delay', http_meta_start_delay, 'ready', http_meta_ready_timeout,
-    'proxyTimeout', http_meta_proxy_timeout,
-    'authorization', http_meta_authorization ? 'set' : 'none')
 
   // ---------------------------------------------------------------- HTTP
-  // $.http.get 本身不缓存; 12h 缓存完全由下面的 scriptResourceCache 控制。
-  // 注意: Sub-Store 对「订阅/文件来源」还有一层 1 小时的远程缓存, 与脚本内请求无关。
-  //       若要整体按 12h 更新, 把该订阅的缓存(前端)也设为 43200 秒即可。
+  // $.http.get 本身不缓存; 12h 缓存完全由 scriptResourceCache 控制。
   async function http(opt = {}) {
     const METHOD = opt.method || 'get'
     const T = parseFloat(opt.timeout ?? TIMEOUT)
@@ -172,9 +175,6 @@ async function operator(proxies = [], targetPlatform, env) {
   }
 
   // ------------------------------------------------------------ DNS 解析
-  // 兼容两类返回:
-  //   short=1 -> ["1.2.3.4", ...]
-  //   完整 JSON -> { Answer: [{ type: 1, data: "1.2.3.4" }, ...] }
   async function resolveDomain(domain) {
     const key = `cloudnproxy:dns:${DNS_SERVER}:${domain}`
     const cached = unwrap(cacheGet(key))
@@ -206,7 +206,6 @@ async function operator(proxies = [], targetPlatform, env) {
   }
 
   // ------------------------------------------------------- IP 归属地查询
-  // 返回 { province, isp }  例如 { province: '江苏', isp: '联通' }
   function normalizeProvince(p) {
     if (!p) return ''
     return String(p)
@@ -221,7 +220,7 @@ async function operator(proxies = [], targetPlatform, env) {
     if (/移动|Mobile|CMCC/i.test(t)) return '移动'
     if (/联通|Unicom/i.test(t)) return '联通'
     if (/电信|Telecom|Chinanet/i.test(t)) return '电信'
-    if (/广电|广电网络/i.test(t)) return '广电'
+    if (/广电/i.test(t)) return '广电'
     if (/教育网|CERNET/i.test(t)) return '教育网'
     return t.replace(/中国/g, '').slice(0, 6) || '未知'
   }
@@ -263,14 +262,11 @@ async function operator(proxies = [], targetPlatform, env) {
       try {
         info = await (GEO_PROVIDER === 'ipapi' ? geoFromSpeedtest(ip) : geoFromIpApi(ip))
       } catch (e2) {
-        log(`${ip} 归属地查询失败, 使用 IP 兜底命名: ${e2.message}`)
+        log(`${ip} 归属地查询失败, 使用「未知」命名: ${e2.message}`)
         info = { province: '', isp: '' }
       }
     }
-    if (!info.province && !info.isp) {
-      // 查询失败不写缓存, 下次执行重试
-      return info
-    }
+    if (!info.province && !info.isp) return info // 查询失败不写缓存, 下次重试
     cacheSet(key, info, CACHE_TTL)
     return info
   }
@@ -284,12 +280,7 @@ async function operator(proxies = [], targetPlatform, env) {
         while (index < tasks.length && running < concurrency) {
           const task = tasks[index++]
           running++
-          task()
-            .catch(() => {})
-            .finally(() => {
-              running--
-              next()
-            })
+          task().catch(() => {}).finally(() => { running--; next() })
         }
         if (running === 0) resolve()
       }
@@ -297,9 +288,49 @@ async function operator(proxies = [], targetPlatform, env) {
     })
   }
 
+  // -------------------------------------------------- HTTP-META 核心生命周期
+  // 等 mihomo 真正绑定监听端口, 避免 /start 返回后核心尚未就绪导致 ECONNREFUSED
+  async function waitForCoreReady(host, port, timeoutMs) {
+    const net = typeof require === 'function' ? require('net') : null
+    if (!net) {
+      await $.wait(timeoutMs)
+      return
+    }
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      if (await canConnect(net, host, port, 2000)) {
+        log(`核心就绪: ${host}:${port}`)
+        return
+      }
+      await $.wait(500)
+    }
+    throw new Error(`核心就绪等待超时 ${timeoutMs}ms, 端口 ${host}:${port} 仍不可连接`)
+  }
+
+  function canConnect(net, host, port, timeoutMs) {
+    return new Promise(resolve => {
+      let socket, settled = false
+      const finish = ok => {
+        if (settled) return
+        settled = true
+        try { socket && socket.destroy() } catch (e) {}
+        resolve(ok)
+      }
+      try {
+        socket = net.connect({ host, port })
+        socket.setTimeout(timeoutMs)
+        socket.once('connect', () => finish(true))
+        socket.once('timeout', () => finish(false))
+        socket.once('error', () => finish(false))
+      } catch (e) {
+        finish(false)
+      }
+    })
+  }
+
   // ------------------------------------------------------------ 节点构造
   function buildNode(ip, label) {
-    return {
+    const node = {
       name: `${PREFIX}${label}`,
       server: ip,
       port: PORT,
@@ -312,9 +343,10 @@ async function operator(proxies = [], targetPlatform, env) {
         Meng: MENG,
       },
     }
+    return node
   }
 
-  function entryLabel(info) {
+  function label(info) {
     return info.province && info.isp
       ? `${info.province}${info.isp}`
       : info.province || info.isp || '未知'
@@ -323,48 +355,148 @@ async function operator(proxies = [], targetPlatform, env) {
   // --------------------------------------------------------------- main
   const entryIps = await resolveDomain(DOMAIN)
 
-  // 出口 IP 取 Host 头的 host 部分; 若不是 IP(域名)则跳过出口查询, 用「出口」占位
-  const hostOnly = HOST.replace(/:\d+$/, '')
-  const exitIp = isIPv4(hostOnly) ? hostOnly : null
-  let exitLabel = '出口'
-  if (exitIp) {
-    const exitInfo = await queryGeo(exitIp)
-    exitLabel = entryLabel(exitInfo)
+  // 1) 入口归属地 (入口 IP 自身的省份+运营商)
+  const entryGeoMap = new Map()
+  await executeAsyncTasks(
+    entryIps.map(ip => async () => { entryGeoMap.set(ip, await queryGeo(ip)) }),
+    { concurrency: CONCURRENCY }
+  )
+
+  // 2) 构造节点, 交给 HTTP-META 核心 (转成 mihomo 内部格式, 保留 headers)
+  const internalProxies = []
+  entryIps.forEach((ip, index) => {
+    try {
+      const node = buildNode(ip, `cloudnproxy-${index}`)
+      // 剥离交叉引用字段, 避免悬空引用导致 mihomo 解析配置 fatal
+      const cleaned = { ...node }
+      delete cleaned['dialer-proxy']
+      delete cleaned['underlying-proxy']
+      const internal = ProxyUtils.produce([cleaned], 'ClashMeta', 'internal', {
+        'include-unsupported-proxy': INCLUDE_UNSUPPORTED,
+      })?.[0]
+      if (internal) {
+        internalProxies.push({ ...internal, _entry_ip: ip, _proxies_index: index })
+      }
+    } catch (e) {
+      $.error(`[${ip}] produce 失败: ${e.message ?? e}`)
+    }
+  })
+
+  if (!internalProxies.length) {
+    throw new Error('没有可供 HTTP-META 核心使用的节点')
   }
 
-  const geoMap = new Map()
+  // 3) 启动核心
+  const http_meta_timeout = http_meta_start_delay + internalProxies.length * http_meta_proxy_timeout
+  const startRes = await http({
+    retries: 0,
+    method: 'post',
+    url: `${http_meta_api}/start`,
+    headers: {
+      'Content-type': 'application/json',
+      Authorization: http_meta_authorization,
+    },
+    body: JSON.stringify({ proxies: internalProxies, timeout: http_meta_timeout }),
+  })
+  let startBody = startRes.body
+  try { startBody = JSON.parse(startBody) } catch (e) {}
+  const { ports, pid } = startBody || {}
+  if (!pid || !ports || !ports.length) {
+    throw new Error(`======== HTTP-META 启动失败 ========\n${JSON.stringify(startBody)}`)
+  }
+  log(`\n======== HTTP-META 启动 ====\n[端口] ${ports}\n[PID] ${pid}`)
+  log(`等待 ${http_meta_start_delay / 1000} 秒后开始测落地`)
+  await $.wait(http_meta_start_delay)
+  await waitForCoreReady(http_meta_host, ports[0], http_meta_ready_timeout)
+
+  // 4) 逐节点经核心端口请求「查 IP」接口, 拿真实落地 IP
+  const landingMap = new Map()
   await executeAsyncTasks(
-    entryIps.map(ip => async () => {
-      geoMap.set(ip, await queryGeo(ip))
+    internalProxies.map((proxy, index) => async () => {
+      const entryIp = proxy._entry_ip
+      const cacheKey = `cloudnproxy:landing:${HOST}:${AUTH}:${entryIp}`
+      const cached = unwrap(cacheGet(cacheKey))
+      if (cached && cached.query) {
+        landingMap.set(entryIp, cached)
+        dlog(`${entryIp} 落地使用缓存 ${cached.query}`)
+        return
+      }
+      try {
+        const res = await http({
+          proxy: `http://${http_meta_host}:${ports[index]}`,
+          url: LOOKUP_URL,
+          headers: { 'User-Agent': UA },
+        })
+        const d = parseJson(res.body)
+        const query = d.query || d.ip || (d.data && d.data.ip)
+        if (d.status === 'success' && query && isIPv4(String(query))) {
+          const landing = { query: String(query) }
+          landingMap.set(entryIp, landing)
+          cacheSet(cacheKey, landing, CACHE_TTL)
+          log(`[${entryIp}] 落地 IP ${landing.query}`)
+        } else {
+          log(`[${entryIp}] 落地查询无效: ${JSON.stringify(d).slice(0, 160)}`)
+        }
+      } catch (e) {
+        log(`[${entryIp}] 落地测活失败: ${e.message ?? e}`)
+      }
     }),
     { concurrency: CONCURRENCY }
   )
 
-  // 同名(同省同运营商)节点加序号: 广东电信 01 / 广东电信 02
+  // 5) 关闭核心 (无论成功失败都要关)
+  try {
+    await http({
+      method: 'post',
+      url: `${http_meta_api}/stop`,
+      headers: {
+        'Content-type': 'application/json',
+        Authorization: http_meta_authorization,
+      },
+      body: JSON.stringify({ pid: [pid] }),
+    })
+    log('======== HTTP-META 关闭 ====')
+  } catch (e) {
+    $.error('HTTP-META 关闭失败: ' + (e.message ?? e))
+  }
+
+  // 6) 落地 IP 归属地查询
+  const exitGeoMap = new Map()
+  await executeAsyncTasks(
+    [...new Set([...landingMap.values()].map(v => v.query))].map(ip => async () => {
+      exitGeoMap.set(ip, await queryGeo(ip))
+    }),
+    { concurrency: CONCURRENCY }
+  )
+
+  // 7) 组装: 丢弃测不到落地的节点 (keep_failed=true 时保留, 出口名「未知」)
+  const survivors = entryIps.filter(ip => landingMap.has(ip) || KEEP_FAILED)
+  // 同名(同入口名+同出口名)节点加序号: 广东移动|江苏电信 01 / 02
   const baseCounts = new Map()
   const seq = new Map()
-  for (const ip of entryIps) {
-    const base = entryLabel(geoMap.get(ip) || {})
+  for (const ip of survivors) {
+    const landing = landingMap.get(ip)
+    const exitName = landing ? label(exitGeoMap.get(landing.query) || {}) : '未知'
+    const base = `${label(entryGeoMap.get(ip) || {})}${SEPARATOR}${exitName}`
     baseCounts.set(base, (baseCounts.get(base) || 0) + 1)
   }
 
-  const generated = entryIps.map(ip => {
-    const info = geoMap.get(ip) || {}
-    const base = entryLabel(info)
-    let name
+  const generated = survivors.map(ip => {
+    const landing = landingMap.get(ip)
+    const exitName = landing ? label(exitGeoMap.get(landing.query) || {}) : '未知'
+    const base = `${label(entryGeoMap.get(ip) || {})}${SEPARATOR}${exitName}`
+    let name = base
     if (baseCounts.get(base) > 1) {
       const n = (seq.get(base) || 0) + 1
       seq.set(base, n)
       name = `${base} ${String(n).padStart(2, '0')}`
-    } else {
-      name = base
     }
-    const node = buildNode(ip, `${name}${SEPARATOR}${exitLabel}`)
-    dlog(`${ip} -> ${node.name}`)
+    const node = buildNode(ip, name)
+    dlog(`${ip} -> ${node.name}${landing ? ' (落地 ' + landing.query + ')' : ' (未测到落地)'}`)
     return node
   })
 
-  log(`生成 ${generated.length} 个节点, 出口 ${HOST} -> ${exitLabel}`)
+  log(`测活通过 ${generated.length}/${entryIps.length} 个节点 (落地 IP 各不相同)`)
   if (APPEND) return [...proxies, ...generated]
   return generated
 }
