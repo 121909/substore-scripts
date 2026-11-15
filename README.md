@@ -71,7 +71,7 @@ https://raw.githubusercontent.com/121909/substore-scripts/main/baidu-cloudnproxy
 | --- | --- | --- |
 | `domain` | `cloudnproxy.baidu.com` | 解析的域名 |
 | `dns_server` | `https://223.5.5.5/resolve` | DoH JSON 接口（支持 `short=1` 数组或 `Answer` 结构） |
-| `host` | `153.3.236.22:443` | `Host` 头（T5 鉴权，非出口 IP） |
+| `host` | `153.3.236.22:443` | `Host` 头（T5 鉴权，非出口 IP；须与 `auth` 配对，勿改成入口 IP） |
 | `auth` | `683556433` | `X-T5-Auth` |
 | `ua` | 模板 UA | `User-Agent` |
 | `meng` | `dm.toutiao.com` | `Meng` 头 |

@@ -42,7 +42,9 @@
  *   - dns_server      DoH JSON 接口, 默认 https://223.5.5.5/resolve
  *                     (支持 short=1 数组或 {Answer:[...]} 结构)
  *   - host            Host 头 (T5 鉴权, 非出口 IP), 默认 153.3.236.22:443
- *   - auth            X-T5-Auth, 默认 683556433
+ *                     ⚠ 与 auth 成对: 实测改成入口 IP / 其它 IP / 单独换 auth
+ *                       都会被上游 403 ERR_ACCESS_DENIED 拒绝, 勿随意改
+ *   - auth            X-T5-Auth, 默认 683556433 (须与 host 配对)
  *   - ua              User-Agent, 默认模板里的 baiduboxapp UA
  *   - meng            Meng 头, 默认 dm.toutiao.com
  *   - port            节点端口, 默认 443
